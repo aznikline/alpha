@@ -14,40 +14,8 @@ try:
     from qmt_local.strategies.factor import AlphaFactor, FactorResult
     _HAS_QMT = True
 except ImportError:
+    from bridge._qmt_types import AlphaFactor, FactorResult
     _HAS_QMT = False
-    from abc import ABC, abstractmethod
-
-    class AlphaFactor(ABC):
-        """Local fallback ABC matching qmt's AlphaFactor interface."""
-        def __init__(self, name: str = ""):
-            self.name = name or self.__class__.__name__
-
-        @abstractmethod
-        def compute(self, code: str, df: pd.DataFrame) -> float:
-            raise NotImplementedError
-
-        def compute_universe(
-            self,
-            data: dict[str, pd.DataFrame],
-            date: Any = None,
-        ):
-            # Returns dict-style result when qmt FactorResult not available
-            values = {}
-            for code, df in data.items():
-                try:
-                    val = self.compute(code, df)
-                    if pd.notna(val) and np.isfinite(val):
-                        values[code] = float(val)
-                except Exception:
-                    continue
-            return pd.Series(values, name=self.name)
-
-    class FactorResult:
-        """Local fallback for qmt's FactorResult."""
-        def __init__(self, values: pd.Series, name: str, date: Any):
-            self.values = values
-            self.name = name
-            self.date = date
 
 
 class SignalAlphaFactor(AlphaFactor):
