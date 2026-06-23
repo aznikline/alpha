@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "OpenAlpha Team"}
+    {name = "aznikline"}
 ]
 keywords = ["quant", "alpha", "factor", "finance"]
 classifiers = [
@@ -43,7 +43,8 @@ viz = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/openalpha-bridge"
+Homepage = "https://github.com/aznikline/alpha"
+Repository = "https://github.com/aznikline/alpha"
 
 # Package discovery: simres from OpenAlpha/src, bridge from root
 [tool.setuptools]

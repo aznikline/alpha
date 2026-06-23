@@ -40,7 +40,7 @@ The first milestone is not a platform, data lake, dashboard, or live execution s
 
 ### 3.1 OpenAlpha AlphaExecutor
 
-**Location**: `/Users/wizout/op/quant/alpha/OpenAlpha/src/simres/expr.py`
+**Location**: `OpenAlpha/src/simres/expr.py`
 
 ```python
 class AlphaExecutor:
@@ -65,7 +65,7 @@ OpenAlpha orientation:
 
 ### 3.2 qmt AlphaFactor Framework
 
-**Location**: `/Users/wizout/op/quant/qmt/src/qmt_local/strategies/factor.py`
+**Location**: `qmt/src/qmt_local/strategies/factor.py` (external repo)
 
 ```python
 class AlphaFactor(ABC):
@@ -82,7 +82,7 @@ Current `FeatureEngine` is only a preprocessing pipeline. It does not provide `r
 
 ### 3.3 qmt MultiFactorStrategy
 
-**Location**: `/Users/wizout/op/quant/qmt/src/qmt_local/strategies/multi_factor.py`
+**Location**: `qmt/src/qmt_local/strategies/multi_factor.py` (external repo)
 
 ```python
 class MultiFactorStrategy:
@@ -194,10 +194,10 @@ class AlphaBridge:
 
 | ID | Task | Files | Success Criteria |
 |----|------|-------|------------------|
-| P0.1 | Add minimal package config | `/Users/wizout/op/quant/alpha/pyproject.toml` or `/Users/wizout/op/quant/alpha/OpenAlpha/pyproject.toml` | `pip install -e .` works in local dev |
-| P0.2 | Add `FactorOutput` wrapper | `/Users/wizout/op/quant/alpha/bridge/output.py` | ndarray + stocks + dates becomes labeled `(Stock, Date)` DataFrame |
-| P0.3 | Add stock-code mapper | `/Users/wizout/op/quant/alpha/bridge/code_mapper.py` | `000001` maps deterministically to qmt-style codes |
-| P0.4 | Add unit tests for wrapper/mapper | `/Users/wizout/op/quant/alpha/tests/` | Shape, dtype, index, columns, and code conversion are verified |
+| P0.1 | Add minimal package config | `pyproject.toml` or `OpenAlpha/pyproject.toml` | `pip install -e .` works in local dev |
+| P0.2 | Add `FactorOutput` wrapper | `bridge/output.py` | ndarray + stocks + dates becomes labeled `(Stock, Date)` DataFrame |
+| P0.3 | Add stock-code mapper | `bridge/code_mapper.py` | `000001` maps deterministically to qmt-style codes |
+| P0.4 | Add unit tests for wrapper/mapper | `tests/` | Shape, dtype, index, columns, and code conversion are verified |
 
 **Deliverable**: A labeled `FactorOutput` can be created from current `AlphaExecutor.evaluate()` output.
 
@@ -207,11 +207,11 @@ class AlphaBridge:
 
 | ID | Task | Files | Success Criteria |
 |----|------|-------|------------------|
-| P1.1 | Implement `AlphaBridge.transpose()` | `/Users/wizout/op/quant/alpha/bridge/transpose.py` | `(Stock, Date)` becomes `(Date, Stock)` with preserved labels |
-| P1.2 | Implement `AlphaBridge.normalize()` | `/Users/wizout/op/quant/alpha/bridge/normalize.py` | Cross-sectional rank/zscore can run row-wise by date |
-| P1.3 | Implement `SignalAlphaFactor` | `/Users/wizout/op/quant/alpha/bridge/signal_factor.py` | `compute(code, df)` returns the expected signal for qmt |
-| P1.4 | Add qmt integration test | `/Users/wizout/op/quant/alpha/tests/test_qmt_bridge.py` | `SignalAlphaFactor` works as `[(factor, weight)]` input to `MultiFactorStrategy` or a narrow qmt-compatible harness |
-| P1.5 | Add one runnable example | `/Users/wizout/op/quant/alpha/examples/openalpha_to_qmt_factor.py` | Example runs expression -> signal -> qmt factor without Redis/data layer |
+| P1.1 | Implement `AlphaBridge.transpose()` | `bridge/transpose.py` | `(Stock, Date)` becomes `(Date, Stock)` with preserved labels |
+| P1.2 | Implement `AlphaBridge.normalize()` | `bridge/normalize.py` | Cross-sectional rank/zscore can run row-wise by date |
+| P1.3 | Implement `SignalAlphaFactor` | `bridge/signal_factor.py` | `compute(code, df)` returns the expected signal for qmt |
+| P1.4 | Add qmt integration test | `tests/test_qmt_bridge.py` | `SignalAlphaFactor` works as `[(factor, weight)]` input to `MultiFactorStrategy` or a narrow qmt-compatible harness |
+| P1.5 | Add one runnable example | `examples/openalpha_to_qmt_factor.py` | Example runs expression -> signal -> qmt factor without Redis/data layer |
 
 **Deliverable**: The local OpenAlpha -> qmt factor bridge works without external services.
 
@@ -221,10 +221,10 @@ class AlphaBridge:
 
 | ID | Task | Files | Success Criteria |
 |----|------|-------|------------------|
-| P2.1 | Add forward-return alignment helper | `/Users/wizout/op/quant/alpha/bridge/returns.py` | Signal dates and return dates are explicitly shifted and tested |
-| P2.2 | Add IC/IR evaluator | `/Users/wizout/op/quant/alpha/bridge/ic_filter.py` | IC/IR metrics are computed, not required for dispatch |
-| P2.3 | Add leakage tests | `/Users/wizout/op/quant/alpha/tests/test_alignment.py` | Same-day and future-return mistakes fail tests |
-| P2.4 | Document validation workflow | `/Users/wizout/op/quant/alpha/docs/bridge-spec.md` | Bridge spec separates signal creation from factor evaluation |
+| P2.1 | Add forward-return alignment helper | `bridge/returns.py` | Signal dates and return dates are explicitly shifted and tested |
+| P2.2 | Add IC/IR evaluator | `bridge/ic_filter.py` | IC/IR metrics are computed, not required for dispatch |
+| P2.3 | Add leakage tests | `tests/test_alignment.py` | Same-day and future-return mistakes fail tests |
+| P2.4 | Document validation workflow | `docs/bridge-spec.md` | Bridge spec separates signal creation from factor evaluation |
 
 **Deliverable**: A factor can be scored and rejected by research metrics, but qmt consumption does not depend on Redis or a new data platform.
 
@@ -234,8 +234,8 @@ class AlphaBridge:
 
 | ID | Task | Files | Success Criteria |
 |----|------|-------|------------------|
-| P3.1 | Compare OpenAlpha, qmt, and ptrade data contracts | `/Users/wizout/op/quant/alpha/docs/data-layer-spec.md` | Current formats, providers, cache locations, and PIT gaps are documented |
-| P3.2 | Write data-layer ADR | `/Users/wizout/op/quant/alpha/docs/data-layer-adr.md` | Decision: reuse qmt DataManager, create thin adapter, or build shared provider |
+| P3.1 | Compare OpenAlpha, qmt, and ptrade data contracts | `docs/data-layer-spec.md` | Current formats, providers, cache locations, and PIT gaps are documented |
+| P3.2 | Write data-layer ADR | `docs/data-layer-adr.md` | Decision: reuse qmt DataManager, create thin adapter, or build shared provider |
 | P3.3 | Prototype only the chosen adapter | TBD by ADR | No parallel data framework unless ADR proves need |
 
 **Deliverable**: A documented decision about data ownership before adding `/alpha/data`.
@@ -246,9 +246,9 @@ class AlphaBridge:
 
 | Extension | Trigger | Candidate Files |
 |-----------|---------|-----------------|
-| Redis or HTTP signal bus | Need Mac/Linux research process to feed Windows MiniQMT runtime | `/Users/wizout/op/quant/alpha/bridge/signal_bus.py` |
-| ptrade adapter | Need PTrade-style local strategy examples using OpenAlpha signals | `/Users/wizout/op/quant/alpha/bridge/ptrade_adapter.py` |
-| Dashboard | Need repeated visual inspection of IC, turnover, quantiles, and signal drift | `/Users/wizout/op/quant/alpha/dashboard/` |
+| Redis or HTTP signal bus | Need Mac/Linux research process to feed Windows MiniQMT runtime | `bridge/signal_bus.py` |
+| ptrade adapter | Need PTrade-style local strategy examples using OpenAlpha signals | `bridge/ptrade_adapter.py` |
+| Dashboard | Need repeated visual inspection of IC, turnover, quantiles, and signal drift | `dashboard/` |
 | qmt live execution adapter | Backtest bridge is stable and MiniQMT workflow is selected | qmt-side adapter or external proxy |
 
 ---
@@ -258,7 +258,7 @@ class AlphaBridge:
 Only create files needed by the current phase.
 
 ```
-/Users/wizout/op/quant/alpha/
+alpha/
 ├── bridge/
 │   ├── __init__.py
 │   ├── output.py          # FactorOutput wrapper
