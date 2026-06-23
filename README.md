@@ -16,10 +16,10 @@ This workspace connects factor discovery with execution: it mines alpha factors 
 | **OpenAlpha** | `./OpenAlpha/` | Factor discovery — 30+ operators, eval engine, VWAP L/S backtest | Runnable |
 | **bridge/** | `./bridge/` | OpenAlpha → qmt adapter: transpose, normalize, `SignalAlphaFactor`, code mapping | **Implemented** + tested |
 | **tests/** | `./tests/` | Integration tests for the bridge pipeline | **116 tests, 95% cov** |
-| qmt (external) | not in this repo | Local event-driven quant framework — the execution target | Referenced in docs |
-| ptrade (external) | not in this repo | Lightweight strategy layer | Referenced in docs |
+| qmt (private) | separate repo | Author's local event-driven quant framework — the execution target | Private (trading logic) |
+| ptrade (private) | separate repo | Author's lightweight strategy layer | Private |
 
-> `qmt` and `ptrade` are separate local projects not in this repo — they're referenced in `docs/` as integration targets. The bridge is built to adapt OpenAlpha output to qmt's `AlphaFactor` interface, with a Protocol fallback so the bridge and its tests run standalone without qmt installed.
+> `qmt` and `ptrade` are the author's private execution frameworks — the bridge targets qmt's `AlphaFactor` interface, but ships with a Protocol fallback so `bridge/` and its tests run standalone without qmt installed. They're intentionally not published (to isolate trading logic), but the bridge is fully usable and tested independently.
 
 ---
 
