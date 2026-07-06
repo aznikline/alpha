@@ -8,6 +8,11 @@ This is NOT a DataProvider ABC or shared data platform. It's a practical adapter
 that picks the best available source and converts formats for the bridge pipeline.
 
 ADR reference: docs/data-layer-adr.md (ADR-001)
+
+convergence-spec §6 B3: the qmt source path is configurable (env ``QMT_SRC_PATH`` or
+constructor ``qmt_src_path``), no longer hardcoded. Real-data fetch is verified when qmt
+and its dependencies are importable; otherwise the adapter reports ``available=False``
+and callers fall back to synthetic data.
 """
 from __future__ import annotations
 
@@ -17,6 +22,11 @@ import numpy as np
 import pandas as pd
 
 from bridge.code_mapper import StockCodeMapper
+
+# Default qmt source path: env override, else the workspace-relative default.
+_DEFAULT_QMT_SRC = os.environ.get(
+    "QMT_SRC_PATH", "/Users/wizout/op/quant/qmt/src"
+)
 
 
 class QmtDataAdapter:
@@ -31,22 +41,51 @@ class QmtDataAdapter:
             # Use synthetic data or OpenAlpha's data_generator
     """
 
-    def __init__(self, qmt_data_dir: str = ""):
+    def __init__(self, qmt_data_dir: str = "", qmt_src_path: str = ""):
         self._qmt_data_dir = os.path.expanduser(qmt_data_dir or "~/.qmt_local/data")
+        self._qmt_src_path = qmt_src_path or _DEFAULT_QMT_SRC
         self._manager = None
         self._mapper = StockCodeMapper()
         self._available = False
         self._try_init_qmt()
 
     def _try_init_qmt(self) -> None:
+        # Add qmt src to path (idempotent). Configurable via constructor/env.
+        if self._qmt_src_path and self._qmt_src_path not in sys.path:
+            sys.path.insert(0, self._qmt_src_path)
         try:
-            sys.path.insert(0, "/Users/wizout/op/quant/qmt/src")
             from qmt_local.data.manager import DataManager
             self._manager = DataManager(cache_dir=self._qmt_data_dir)
             self._available = True
-        except ImportError:
+        except ImportError as exc:
+            # qmt (or one of its deps) not importable from this venv. Name the missing
+            # module so the user knows what to install — previously this was silent.
+            # Review fix C5: qmt's DataManager imports loguru/akshare at import time;
+            # alpha's venv lacks these, so available=False there until installed.
+            import warnings
+
+            warnings.warn(
+                f"QmtDataAdapter: qmt DataManager not importable from this venv "
+                f"(missing module: {exc.name or exc!s}). Real-data fetch disabled; "
+                f"falling back to synthetic. To enable: install qmt's deps in this venv "
+                f"(e.g. `pip install loguru akshare`) and ensure QMT_SRC_PATH points at "
+                f"qmt/src. Set QMT_SRC_PATH={self._qmt_src_path!r}.",
+                stacklevel=2,
+            )
             self._manager = None
             self._available = False
+
+    @staticmethod
+    def _normalize_date_for_qmt(date: str) -> str:
+        """Normalize a date string to compact YYYYMMDD (qmt/akshare convention).
+
+        Accepts "YYYY-MM-DD", "YYYY/MM/DD", or "YYYYMMDD". Passes through anything
+        that already looks compact.
+        """
+        s = str(date).strip()
+        if "-" in s or "/" in s:
+            return s.replace("-", "").replace("/", "")
+        return s
 
     @property
     def available(self) -> bool:
@@ -66,8 +105,9 @@ class QmtDataAdapter:
 
         Args:
             stocks: Stock codes in qmt suffix format (e.g. "000001.SZ")
-            start: ISO date string "YYYY-MM-DD"
-            end: ISO date string "YYYY-MM-DD"
+            start: Date string — accepts "YYYY-MM-DD" or "YYYYMMDD" (normalized to
+                   YYYYMMDD, which is what qmt DataManager.get_history expects).
+            end: Date string — same format tolerance as ``start``.
             fields: Data fields to fetch
 
         Returns:
@@ -80,9 +120,13 @@ class QmtDataAdapter:
         if not self._available:
             raise RuntimeError("qmt DataManager not available — cannot fetch market data")
 
+        # qmt's akshare provider expects compact YYYYMMDD dates, not ISO YYYY-MM-DD.
+        start_qmt = self._normalize_date_for_qmt(start)
+        end_qmt = self._normalize_date_for_qmt(end)
+
         raw = self._manager.get_history(
             codes=stocks, fields=fields, period="1d",
-            start_date=start, end_date=end, adjust="qfq",
+            start_date=start_qmt, end_date=end_qmt, adjust="qfq",
         )
 
         if not raw:
@@ -189,6 +233,13 @@ class QmtDataAdapter:
         Returns dict mapping field_name -> np.ndarray with shape (n_stocks, n_dates).
         Stock codes are bare integers (OpenAlpha convention), not suffix format.
 
+        **Row-order contract (review fix C4):** ndarray row ``i`` corresponds to
+        ``stocks[i]`` (filtered to stocks that actually had data), in the **input order**.
+        Previously ``.values`` discarded the index and an earlier ``sort_index(axis=1)``
+        reordered columns alphabetically, so callers could not reliably map rows back to
+        codes. Now the transposed frame is reindexed to the input ``stocks`` order before
+        ``.values``; use :meth:`get_daily_codes` to get the ordered bare-code list.
+
         Note: This converts from (Date, Stock) bridge format to (Stock, Date)
         OpenAlpha format — the reverse of AlphaBridge.transpose().
         """
@@ -204,6 +255,14 @@ class QmtDataAdapter:
             # Transpose: (Date, Stock) → (Stock, Date)
             transposed = field_df.T.astype(np.float32)
 
+            # Reindex rows to the INPUT stocks order (filtered to those present),
+            # so ndarray row i == stocks[i]. This is the contract callers rely on.
+            present = [c for c in stocks if c in transposed.index]
+            if not present:
+                result[field] = np.empty((0, len(field_df.index)), dtype=np.float32)
+                continue
+            transposed = transposed.reindex(present)
+
             # Rename columns to bare integer codes (OpenAlpha convention)
             bare_codes = [self._mapper.to_int(col) for col in transposed.index]
             transposed.index = [f"{code:06d}" for code in bare_codes]
@@ -211,3 +270,23 @@ class QmtDataAdapter:
             result[field] = transposed.values
 
         return result
+
+    def get_daily_codes(
+        self,
+        stocks: list[str],
+        start: str,
+        end: str,
+    ) -> list[str]:
+        """Return the ordered bare-code list matching ``get_daily_ndarray`` row order.
+
+        Companion to :meth:`get_daily_ndarray` so callers can map ndarray row ``i`` back
+        to a stock code. Returns 6-digit zero-padded bare codes (OpenAlpha convention).
+        """
+        # Fetch a single field to determine which stocks have data in-range.
+        multi_df = self.get_daily(stocks, start, end, ["close"])
+        if isinstance(multi_df.columns, pd.MultiIndex):
+            field_df = multi_df.xs("close", level=1, axis=1)
+        else:
+            field_df = multi_df
+        present = [c for c in stocks if c in field_df.columns]
+        return [f"{self._mapper.to_int(c):06d}" for c in present]

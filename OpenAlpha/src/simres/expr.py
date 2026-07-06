@@ -148,9 +148,24 @@ class AlphaExecutor:
         self.data_loaded = True
         print(f"--- 引擎就绪 ---\n")
 
-    def evaluate(self, expression):
-        """
-        执行表达式计算
+    def evaluate(self, expression, *, universe="csi_500", start=None, end=None, as_output=False):
+        """执行表达式计算。
+
+        Args:
+            expression: 因子表达式，如 "cs_rank(ts_delta(close, 5))"
+            universe: 股票池名称（仅 as_output=True 时用于 metadata，默认 "csi_500"）
+            start/end: 日期边界（仅 as_output=True 时用于 metadata；当前不切片数据，
+                保留向后兼容；切片在 bridge 层处理）
+            as_output: 为 True 时返回 :class:`bridge.output.FactorOutput`（带股票代码、
+                日期索引、metadata），供 bridge 层直接消费，省去手动 wrap_factor_output。
+                为 False（默认）返回裸 (Stock, Date) np.ndarray，保持向后兼容。
+
+        Returns:
+            np.ndarray 或 FactorOutput（as_output=True 时）；表达式出错返回 None。
+
+        Note (convergence-spec §5.3): as_output=True 是 Phase C3 交付物，使 OpenAlpha
+            与 bridge 自动衔接。FactorOutput/FactorMetadata/wrap_factor_output 定义在
+            alpha/bridge/output.py。
         """
         if not self.data_loaded:
             self.load_all_data()
@@ -158,11 +173,57 @@ class AlphaExecutor:
         try:
             # 限制执行环境，防止恶意调用
             result = eval(expression, {"__builtins__": None}, self.context)
-            return result
         except Exception:
             print(f"表达式执行错误: {expression}")
             traceback.print_exc()
             return None
+
+        if not as_output:
+            return result
+
+        # as_output=True: wrap into FactorOutput for direct bridge consumption.
+        return self._wrap_as_factor_output(result, expression, universe)
+
+    def _wrap_as_factor_output(self, alpha, expression, universe):
+        """Wrap a raw (Stock, Date) ndarray into a FactorOutput (bridge §5.3).
+
+        Uses self.context['stock_list'] and self.context['datestr'] for labels.
+        Lazily imports bridge.output so OpenAlpha doesn't hard-depend on the bridge
+        package being importable (e.g. when run standalone without bridge on path).
+        """
+        if alpha is None:
+            return None
+        try:
+            from bridge.output import wrap_factor_output
+        except ImportError:
+            # Bridge not on path — try the alpha-root relative import.
+            import sys
+            import os
+            alpha_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            if alpha_root not in sys.path:
+                sys.path.insert(0, alpha_root)
+            try:
+                from bridge.output import wrap_factor_output
+            except ImportError as exc:
+                raise ImportError(
+                    "as_output=True requires the bridge package (alpha/bridge/) to be "
+                    f"importable. Original error: {exc}"
+                ) from exc
+
+        stock_list = self.context.get("stock_list")
+        datestr = self.context.get("datestr")
+        if stock_list is None or datestr is None:
+            raise RuntimeError(
+                "as_output=True requires context['stock_list'] and context['datestr']; "
+                "call load_all_data() first."
+            )
+        return wrap_factor_output(
+            alpha=alpha,
+            stock_list=stock_list,
+            datestr=datestr,
+            expression=expression,
+            universe=universe,
+        )
 
     def backtest(self,alpha,price='vwap'):
         """

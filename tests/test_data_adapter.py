@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+import sys
 from unittest.mock import MagicMock, patch
 
 from bridge.data_adapter import QmtDataAdapter
@@ -62,14 +63,44 @@ def _create_mock_manager() -> MagicMock:
 class TestQmtDataAdapterInit:
     """Tests for QmtDataAdapter initialization and availability detection."""
     
-    def test_adapter_available_false_by_default(self):
-        """When qmt import fails, adapter.available should be False."""
-        adapter = QmtDataAdapter()
+    def test_adapter_available_false_by_default(self, monkeypatch):
+        """When qmt import fails, adapter.available should be False.
+
+        Block the qmt_local import so this holds regardless of whether the venv has
+        qmt's deps installed (review fix C5: alpha's venv now has them).
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _block_qmt(name, *args, **kwargs):
+            if name == "qmt_local" or name.startswith("qmt_local."):
+                raise ImportError("qmt_local blocked")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _block_qmt)
+        for mod in list(sys.modules):
+            if mod == "qmt_local" or mod.startswith("qmt_local."):
+                monkeypatch.delitem(sys.modules, mod, raising=False)
+        adapter = QmtDataAdapter(qmt_src_path="/nonexistent/qmt/src")
         assert adapter.available is False
-    
-    def test_adapter_has_pit_returns_false_when_unavailable(self):
+
+    def test_adapter_has_pit_returns_false_when_unavailable(self, monkeypatch):
         """has_pit() should return False when qmt not available."""
-        adapter = QmtDataAdapter()
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _block_qmt(name, *args, **kwargs):
+            if name == "qmt_local" or name.startswith("qmt_local."):
+                raise ImportError("qmt_local blocked")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _block_qmt)
+        for mod in list(sys.modules):
+            if mod == "qmt_local" or mod.startswith("qmt_local."):
+                monkeypatch.delitem(sys.modules, mod, raising=False)
+        adapter = QmtDataAdapter(qmt_src_path="/nonexistent/qmt/src")
         assert adapter.has_pit() is False
     
     def test_adapter_available_true_when_qmt_import_succeeds(self):
@@ -86,40 +117,58 @@ class TestQmtDataAdapterInit:
 
 
 class TestQmtDataAdapterUnavailable:
-    """Tests for error handling when qmt DataManager is not available."""
-    
+    """Tests for error handling when qmt DataManager is not available.
+
+    Block the qmt_local import via monkeypatch so available=False deterministically,
+    independent of which venv the tests run in or whether an earlier test added
+    qmt/src to sys.path (review fix C5).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _unavailable_adapter(self, monkeypatch):
+        # Force qmt_local to be unimportable regardless of sys.path state.
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _block_qmt(name, *args, **kwargs):
+            if name == "qmt_local" or name.startswith("qmt_local."):
+                raise ImportError("qmt_local blocked for unavailable-test")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _block_qmt)
+        # Also remove any cached qmt_local modules so the blocked import is exercised.
+        for mod in list(sys.modules):
+            if mod == "qmt_local" or mod.startswith("qmt_local."):
+                monkeypatch.delitem(sys.modules, mod, raising=False)
+        self.adapter = QmtDataAdapter(qmt_src_path="/nonexistent/qmt/src")
+
     def test_get_daily_raises_runtimeerror_when_unavailable(self):
         """get_daily() should raise RuntimeError when qmt not available."""
-        adapter = QmtDataAdapter()
-        
         with pytest.raises(RuntimeError) as exc_info:
-            adapter.get_daily(
+            self.adapter.get_daily(
                 stocks=["000001.SZ", "600000.SH"],
                 start="2024-01-01",
                 end="2024-01-31",
             )
-        
+
         assert "qmt DataManager not available" in str(exc_info.value)
-    
+
     def test_get_daily_signal_frame_raises_runtimeerror_when_unavailable(self):
         """get_daily_signal_frame() should raise RuntimeError when qmt not available."""
-        adapter = QmtDataAdapter()
-        
         with pytest.raises(RuntimeError) as exc_info:
-            adapter.get_daily_signal_frame(
+            self.adapter.get_daily_signal_frame(
                 stocks=["000001.SZ", "600000.SH"],
                 start="2024-01-01",
                 end="2024-01-31",
             )
-        
+
         assert "qmt DataManager not available" in str(exc_info.value)
-    
+
     def test_get_daily_ndarray_raises_runtimeerror_when_unavailable(self):
         """get_daily_ndarray() should raise RuntimeError when qmt not available."""
-        adapter = QmtDataAdapter()
-        
         with pytest.raises(RuntimeError) as exc_info:
-            adapter.get_daily_ndarray(
+            self.adapter.get_daily_ndarray(
                 stocks=["000001.SZ", "600000.SH"],
                 start="2024-01-01",
                 end="2024-01-31",
@@ -130,10 +179,8 @@ class TestQmtDataAdapterUnavailable:
     
     def test_runtimeerror_message_mentions_qmt_not_available(self):
         """RuntimeError message should clearly state qmt DataManager not available."""
-        adapter = QmtDataAdapter()
-        
         with pytest.raises(RuntimeError, match="qmt DataManager not available"):
-            adapter.get_daily(
+            self.adapter.get_daily(
                 stocks=["000001.SZ"],
                 start="2024-01-01",
                 end="2024-01-10",
@@ -436,3 +483,86 @@ class TestQmtDataAdapterEdgeCases:
         available_fields = result.columns.get_level_values("field").unique()
         assert "close" in available_fields
         assert "volume" in available_fields
+
+
+class TestDateNormalization:
+    """convergence-spec B3: adapter normalizes ISO dates to qmt's YYYYMMDD convention."""
+
+    def test_iso_with_dashes_compacted(self):
+        assert QmtDataAdapter._normalize_date_for_qmt("2024-12-01") == "20241201"
+
+    def test_iso_with_slashes_compacted(self):
+        assert QmtDataAdapter._normalize_date_for_qmt("2024/12/01") == "20241201"
+
+    def test_compact_passthrough(self):
+        assert QmtDataAdapter._normalize_date_for_qmt("20241201") == "20241201"
+
+    def test_get_daily_compacts_dates_before_calling_manager(self):
+        """The adapter must pass YYYYMMDD to DataManager.get_history, not ISO."""
+        adapter = QmtDataAdapter()
+        captured = {}
+
+        def fake_get_history(codes, fields, period, start_date, end_date, adjust, **kw):
+            captured["start"] = start_date
+            captured["end"] = end_date
+            return {}
+
+        adapter._available = True
+        adapter._manager = MagicMock()
+        adapter._manager.get_history = MagicMock(side_effect=fake_get_history)
+
+        with pytest.raises(RuntimeError, match="returned no data"):
+            adapter.get_daily(["000001.SZ"], "2024-12-01", "2024-12-31", ["close"])
+
+        assert captured["start"] == "20241201", captured
+        assert captured["end"] == "20241231", captured
+
+
+class TestRealDataFetch:
+    """Live integration: fetch real data through qmt DataManager.
+
+    Skips when qmt (or its deps) is not importable from this venv. Run from a venv
+    that has qmt installed (e.g. qmt's venv) to exercise the real path.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _require_qmt(self):
+        adapter = QmtDataAdapter()
+        if not adapter.available:
+            pytest.skip("qmt DataManager not importable in this venv")
+
+    def test_real_signal_frame_is_datetimeindex_float32(self):
+        adapter = QmtDataAdapter()
+        frame = adapter.get_daily_signal_frame(
+            ["600000.SH"], "2024-12-01", "2024-12-31", price_field="close"
+        )
+        assert isinstance(frame.index, pd.DatetimeIndex)
+        assert (frame.dtypes == np.float32).all()
+        assert "600000.SH" in frame.columns
+        assert len(frame) > 0
+
+    def test_real_ndarray_is_stock_date(self):
+        adapter = QmtDataAdapter()
+        nd = adapter.get_daily_ndarray(
+            ["600000.SH"], "2024-12-01", "2024-12-31", ["close"]
+        )
+        assert "close" in nd
+        # (Stock, Date): 1 stock × N dates
+        assert nd["close"].ndim == 2
+        assert nd["close"].shape[0] == 1
+        assert nd["close"].dtype == np.float32
+
+    def test_real_ndarray_row_order_matches_input_codes(self):
+        """Review fix C4: ndarray row i must correspond to stocks[i] (input order), and
+        get_daily_codes returns the matching bare-code list. Previously .values discarded
+        the index and sort_index(axis=1) reordered alphabetically.
+        """
+        adapter = QmtDataAdapter()
+        stocks = ["600000.SH", "000001.SZ"]  # intentionally NOT alphabetical
+        nd = adapter.get_daily_ndarray(stocks, "2024-12-01", "2024-12-31", ["close"])
+        codes = adapter.get_daily_codes(stocks, "2024-12-01", "2024-12-31")
+        # Row count matches codes count
+        assert nd["close"].shape[0] == len(codes)
+        # Row order follows the input stocks order (600000 before 000001)
+        assert codes[0] == "600000"
+        assert codes[1] == "000001"
